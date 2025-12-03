@@ -1,0 +1,189 @@
+"""
+Data extraction logic for ETL pipeline
+"""
+
+import logging
+import requests
+import pandas as pd
+from typing import List, Dict, Any
+from airflow.providers.postgres.hooks.postgres import PostgresHook
+from airflow.exceptions import AirflowException
+
+logger = logging.getLogger(__name__)
+
+
+def extract_from_api(endpoint: str, filters: Dict[str, Any] = None, timeout: int = 30) -> List[Dict]:
+    """
+    Extract data from external REST API
+    
+    Args:
+        endpoint: API endpoint URL
+        filters: Query parameters/filters
+        timeout: Request timeout in seconds
+        
+    Returns:
+        List of dictionaries containing API response data
+        
+    Raises:
+        AirflowException: If API call fails
+    """
+    try:
+        logger.info(f"Fetching data from API: {endpoint}")
+        
+        # Build request parameters
+        params = filters or {}
+        params['limit'] = 10000
+        params['offset'] = 0
+        
+        # Make API call
+        response = requests.get(
+            endpoint,
+            params=params,
+            timeout=timeout,
+            headers={'Content-Type': 'application/json'}
+        )
+        
+        # Check response status
+        if response.status_code != 200:
+            raise AirflowException(
+                f"API request failed with status {response.status_code}: {response.text}"
+            )
+        
+        # Parse JSON response
+        data = response.json()
+        
+        # Handle paginated responses
+        if isinstance(data, dict) and 'data' in data:
+            records = data['data']
+        elif isinstance(data, list):
+            records = data
+        else:
+            raise AirflowException(f"Unexpected API response format: {type(data)}")
+        
+        logger.info(f"Successfully extracted {len(records)} records from API")
+        return records
+        
+    except requests.exceptions.Timeout:
+        raise AirflowException(f"API request timed out after {timeout} seconds")
+    except requests.exceptions.ConnectionError as e:
+        raise AirflowException(f"Failed to connect to API: {str(e)}")
+    except Exception as e:
+        raise AirflowException(f"Error extracting from API: {str(e)}")
+
+
+def extract_from_database(
+    connection_id: str,
+    query: str,
+    params: Dict[str, Any] = None,
+    chunksize: int = 10000
+) -> List[Dict]:
+    """
+    Extract data from PostgreSQL database
+    
+    Args:
+        connection_id: Airflow connection ID
+        query: SQL query to execute
+        params: Query parameters
+        chunksize: Number of rows to fetch at a time
+        
+    Returns:
+        List of dictionaries containing query results
+        
+    Raises:
+        AirflowException: If database query fails
+    """
+    try:
+        logger.info(f"Executing database query with connection: {connection_id}")
+        
+        # Get database connection
+        postgres_hook = PostgresHook(postgres_conn_id=connection_id)
+        
+        # Execute query and fetch data
+        df = postgres_hook.get_pandas_df(sql=query, parameters=params)
+        
+        # Convert to list of dictionaries
+        records = df.to_dict('records')
+        
+        logger.info(f"Successfully extracted {len(records)} records from database")
+        return records
+        
+    except Exception as e:
+        raise AirflowException(f"Error extracting from database: {str(e)}")
+
+
+def extract_incremental(
+    connection_id: str,
+    table_name: str,
+    last_run_date: str = None,
+    incremental_column: str = 'updated_at'
+) -> List[Dict]:
+    """
+    Extract data incrementally (only changed records since last run)
+    
+    Args:
+        connection_id: Airflow connection ID
+        table_name: Source table name
+        last_run_date: Last execution date (for incremental logic)
+        incremental_column: Column to track changes
+        
+    Returns:
+        List of new/updated records
+    """
+    try:
+        where_clause = ""
+        params = {}
+        
+        if last_run_date:
+            where_clause = f"WHERE {incremental_column} > %(last_run)s"
+            params['last_run'] = last_run_date
+        
+        query = f"""
+        SELECT * FROM {table_name}
+        {where_clause}
+        ORDER BY {incremental_column} DESC
+        """
+        
+        records = extract_from_database(connection_id, query, params)
+        logger.info(f"Extracted {len(records)} incremental records from {table_name}")
+        
+        return records
+        
+    except Exception as e:
+        raise AirflowException(f"Error in incremental extraction: {str(e)}")
+
+
+def validate_extraction(records: List[Dict], min_records: int = 1) -> Dict[str, Any]:
+    """
+    Validate extracted data quality
+    
+    Args:
+        records: Extracted records
+        min_records: Minimum expected records
+        
+    Returns:
+        Validation results dictionary
+    """
+    results = {
+        'total_records': len(records),
+        'is_valid': True,
+        'issues': []
+    }
+    
+    # Check minimum records
+    if len(records) < min_records:
+        results['is_valid'] = False
+        results['issues'].append(
+            f"Expected at least {min_records} records, got {len(records)}"
+        )
+    
+    # Check for empty records
+    if len(records) == 0:
+        results['is_valid'] = False
+        results['issues'].append("No records extracted")
+    
+    # Check for null records
+    null_count = sum(1 for r in records if r is None)
+    if null_count > 0:
+        results['issues'].append(f"Found {null_count} null records")
+    
+    return results

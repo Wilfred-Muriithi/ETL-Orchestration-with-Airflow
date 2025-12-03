@@ -1,0 +1,488 @@
+# End-to-End Airflow ETL Project - Complete Setup Guide
+
+## 📌 Project Summary
+
+This is a **production-grade** ETL orchestration project that demonstrates:
+- ✅ Complete data pipeline architecture (Extract → Transform → Load)
+- ✅ Docker Compose setup for local development
+- ✅ Real-world error handling and retry logic
+- ✅ Data quality validation
+- ✅ Monitoring and logging
+- ✅ Scalable design (LocalExecutor to CeleryExecutor)
+
+## 🏗️ Architecture Overview
+
+```
+                    ┌─────────────────────────────────────────────┐
+                    │         Airflow Orchestration Layer         │
+                    │  (Scheduler, Webserver, LocalExecutor)      │
+                    └─────────────┬───────────────────────────────┘
+                                  │
+                    ┌─────────────┴───────────────────────────────┐
+                    │                                             │
+              ┌─────▼──────┐                          ┌──────────▼────┐
+              │  API Source │                          │ Database Src  │
+              │ (Extract 1) │                          │ (Extract 2)   │
+              └─────┬──────┘                          └───────┬─────┘
+                    │                                        │
+                    └────────────┬─────────────────────────┬─┘
+                                 │
+                          ┌──────▼─────────┐
+                          │  Transform:    │
+                          │  - Clean       │
+                          │  - Dedupe      │
+                          │  - Validate    │
+                          │  - Enrich      │
+                          └────────┬──────┘
+                                   │
+                          ┌────────▼──────────┐
+                          │  Data Quality     │
+                          │  Check & Merge    │
+                          └────────┬──────────┘
+                                   │
+                    ┌──────────────▼───────────────┐
+                    │   Load to Data Warehouse     │
+                    │   (PostgreSQL + Staging)     │
+                    └──────────────┬───────────────┘
+                                   │
+                    ┌──────────────▼───────────────┐
+                    │   Post-Load Validation       │
+                    │   & Reporting                │
+                    └──────────────────────────────┘
+```
+
+## 🚀 Quick Start (5 minutes)
+
+### Step 1: Clone & Setup
+
+```bash
+# Clone repository
+git clone <repo-url>
+cd airflow-etl-project
+
+# Create .env file (already provided)
+cat > .env << EOF
+POSTGRES_USER=airflow
+POSTGRES_PASSWORD=airflow
+POSTGRES_DB=airflow
+DATA_WAREHOUSE_DB=data_warehouse
+ENVIRONMENT=development
+DEBUG=true
+EOF
+```
+
+### Step 2: Build & Start
+
+```bash
+# Build custom Docker image
+docker-compose build
+
+# Initialize Airflow database
+docker-compose -f docker-compose.yaml up airflow-init
+
+# Start all services
+docker-compose up -d
+
+# Check status
+docker-compose ps
+```
+
+### Step 3: Access Airflow UI
+
+```
+URL: http://localhost:8080
+Username: airflow
+Password: airflow
+```
+
+### Step 4: Enable & Trigger DAG
+
+1. Find `etl_pipeline_dag` in the DAGs list
+2. Click the toggle to enable it
+3. Click "Trigger DAG" to run manually
+4. Monitor in Graph View or Gantt Chart
+
+## 📁 Project File Structure Explained
+
+```
+airflow-etl-project/
+│
+├── docker-compose.yaml              # Service definitions (webserver, scheduler, postgres, redis)
+├── Dockerfile                       # Custom Airflow image with dependencies
+├── requirements.txt                 # Python packages (airflow providers, pandas, etc)
+├── .env                            # Environment configuration
+│
+├── dags/
+│   ├── __init__.py
+│   ├── etl_pipeline_dag.py         # MAIN DAG DEFINITION (104 lines)
+│   │                               # Tasks: extract, transform, validate, load
+│   │                               # Error handling, retries, dependencies
+│   │
+│   └── utils/
+│       ├── __init__.py
+│       ├── extractors.py           # Extract functions (API, Database, Incremental)
+│       ├── transformers.py         # Transform functions (clean, dedupe, validate)
+│       └── loaders.py              # Load functions (upsert, insert, verify)
+│
+├── config/
+│   ├── __init__.py
+│   └── settings.py                 # Configuration management (BaseSettings pattern)
+│
+├── scripts/
+│   └── init_db.sql                 # Database schema & tables
+│
+├── tests/
+│   └── test_etl_logic.py           # Unit tests
+│
+└── README.md                        # Documentation
+```
+
+## 🔑 Key DAG Components
+
+### DAG Definition (4 phases)
+
+**Phase 1: Setup**
+- `start_pipeline`: Mark pipeline start
+- `validate_prerequisites`: Check config, connections
+
+**Phase 2: Extract** (Parallel)
+- `extract_from_api`: Fetch from external API
+- `extract_from_database`: Query internal database
+
+**Phase 3: Transform** (Parallel)
+- `transform_api_data`: Clean, dedupe, enrich API data
+- `transform_db_data`: Clean, dedupe, validate DB data
+- `merge_and_validate`: Combine datasets, quality check
+
+**Phase 4: Load & Verify**
+- `prepare_warehouse`: Create/update staging tables
+- `load_to_warehouse`: Upsert to data warehouse
+- `run_data_quality_checks`: Post-load validation
+- `generate_pipeline_report`: Summary statistics
+- `end_pipeline`: Mark completion
+
+### Error Handling Strategy
+
+```python
+# Automatic retries
+retries=3,                          # 3 attempts
+retry_delay=timedelta(minutes=5),   # 5 min between retries
+retry_exponential_multiplier=2,     # Exponential backoff (5min, 10min, 20min)
+max_retry_delay=timedelta(minutes=15),  # Cap at 15 min
+
+# Task dependencies
+trigger_rule='all_success'          # Wait for all upstream tasks
+execution_timeout=timedelta(hours=2) # Fail if task takes >2 hours
+
+# Email notifications
+email_on_failure=True               # Send email on failure
+email=['admin@example.com']         # To this address
+```
+
+## 📊 Transformation Pipeline
+
+### Data Cleaning Operations
+```python
+transform_data(
+    data_source='api',
+    transformations=['clean', 'deduplicate', 'enrich', 'validate']
+)
+```
+
+**Clean Step**: 
+- Strip whitespace
+- Remove special characters
+- Type casting
+- Missing value handling
+
+**Deduplicate Step**:
+- Remove exact duplicates
+- Keep first occurrence
+- Check uniqueness constraints
+
+**Validate Step**:
+- Check required fields
+- Validate business rules
+- Remove invalid records
+
+**Enrich Step**:
+- Add metadata (source, timestamp)
+- Add computed columns
+- Add row hash for versioning
+
+### Data Quality Validation
+
+```python
+validate_data(
+    total_records=1000,
+    quality_threshold=0.95  # 95% minimum
+)
+```
+
+Returns:
+- `is_valid`: True/False
+- `quality_score`: 0-1 (e.g., 0.978)
+- `checks`: Completeness, Accuracy, Consistency, Uniqueness
+- `issues`: List of failed checks
+
+## 🗄️ Database Schema
+
+### Schemas
+- **staging**: Temporary ETL data
+- **warehouse**: Production cleaned data
+- **logs**: ETL execution logs
+
+### Key Tables
+
+**staging.etl_data** (Raw transformed data)
+```sql
+id, source, data (JSONB), processed_at, created_at
+```
+
+**warehouse.job_listings** (Production data)
+```sql
+job_id, source, title, company, location, salary_range, 
+description, url, extracted_at, processed_at
+```
+
+**warehouse.applications** (Related fact table)
+```sql
+app_id, user_id, job_id, status, applied_date, outcome
+```
+
+**logs.etl_logs** (Pipeline audit trail)
+```sql
+log_id, dag_id, task_id, execution_date, status, 
+message, error_message, duration_seconds, records_processed
+```
+
+## 📈 Monitoring & Debugging
+
+### Access Logs
+```bash
+# Follow scheduler logs
+docker-compose logs -f airflow-scheduler
+
+# Follow webserver logs
+docker-compose logs -f airflow-webserver
+
+# View DAG logs
+docker-compose logs -f airflow-scheduler | grep etl_pipeline_dag
+```
+
+### Check Database
+
+```bash
+# Connect to PostgreSQL
+docker-compose exec postgres psql -U airflow -d airflow
+
+# View tables
+\dt
+
+# Check staging data
+SELECT * FROM staging.etl_data LIMIT 10;
+
+# Check logs
+SELECT * FROM logs.etl_logs ORDER BY created_at DESC LIMIT 5;
+```
+
+### Monitor via UI
+
+**Airflow Web Interface** (`http://localhost:8080`)
+- **Grid View**: Task execution history and status
+- **Gantt Chart**: Timeline and dependencies
+- **Tree View**: Hierarchical view of DAG runs
+- **Calendar**: Historical success/failure by date
+- **Variable**: Manage dynamic variables
+- **Connection**: Manage database connections
+
+## 🔧 Configuration
+
+### Environment Variables (.env)
+
+```bash
+# Core
+AIRFLOW_HOME=/opt/airflow
+AIRFLOW__CORE__EXECUTOR=LocalExecutor
+
+# Database
+POSTGRES_USER=airflow
+POSTGRES_PASSWORD=airflow
+POSTGRES_HOST=postgres
+POSTGRES_PORT=5432
+
+# Data Warehouse
+DATA_WAREHOUSE_DB=data_warehouse
+DATA_WAREHOUSE_HOST=postgres
+DATA_WAREHOUSE_USER=dw_user
+DATA_WAREHOUSE_PASSWORD=dw_password
+
+# External Services
+EXTERNAL_API_ENDPOINT=https://api.example.com/v1
+API_TIMEOUT=30
+
+# Pipeline Settings
+BATCH_SIZE=1000
+DATA_QUALITY_THRESHOLD=0.95
+ENVIRONMENT=development
+DEBUG=true
+```
+
+### Airflow Connection (in UI)
+
+1. Go to Admin → Connections
+2. Create connection:
+   - **Conn ID**: postgres_default
+   - **Conn Type**: Postgres
+   - **Host**: postgres
+   - **Username**: airflow
+   - **Password**: airflow
+   - **Port**: 5432
+   - **Database**: airflow
+
+## 🚢 Scaling Strategy
+
+### Local Development (Current)
+- **Executor**: LocalExecutor
+- **Workers**: 1 (scheduler machine)
+- **Use**: Development, testing, debugging
+
+### Scale to CeleryExecutor
+1. Update docker-compose: Change executor to CeleryExecutor
+2. Add worker services in docker-compose
+3. Redis broker already configured
+4. Benefits: Parallel task execution across machines
+
+### Scale to Kubernetes
+1. Use KubernetesExecutor
+2. Deploy on GKE, EKS, or AKS
+3. Each task runs in isolated pod
+4. Auto-scaling based on load
+5. Use Helm charts for deployment
+
+### Scale to Cloud (Production)
+- **AWS**: Use AWS MWAA (Managed Workflows for Apache Airflow)
+- **GCP**: Use Cloud Composer
+- **Azure**: Use Synapse Analytics + Airflow
+
+## 📝 Testing
+
+### Unit Tests
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run specific test
+pytest tests/test_etl_logic.py::test_transform_data -v
+
+# Run with coverage
+pytest tests/ --cov=dags --cov-report=html
+```
+
+### DAG Validation
+
+```bash
+# Validate DAG syntax
+airflow dags validate
+
+# Test DAG parsing
+airflow dags list
+
+# Trigger test run
+airflow dags test etl_pipeline_dag 2024-01-01
+```
+
+## 🔐 Security Best Practices
+
+### Secrets Management
+
+✅ **Do**:
+- Store secrets in Airflow Connections (encrypted in DB)
+- Use environment variables for config
+- Use Kubernetes secrets for pod-level deployment
+- Rotate credentials regularly
+
+❌ **Don't**:
+- Hardcode passwords in DAG files
+- Commit secrets to Git
+- Store credentials in logs
+- Use plaintext connections
+
+### Access Control
+
+```python
+# In production, enable RBAC
+AIRFLOW__WEBSERVER__RBAC = True
+AIRFLOW__WEBSERVER__AUTHENTICATE = True
+
+# Define roles and permissions
+# Admin: Full access
+# Viewer: Read-only
+# User: Can trigger DAGs
+# Op: Can view and trigger
+```
+
+## 🐛 Common Issues & Solutions
+
+### Issue: "airflow-init not running"
+```bash
+# Solution: Run manually first
+docker-compose up airflow-init
+docker-compose up -d
+```
+
+### Issue: "Could not connect to PostgreSQL"
+```bash
+# Check postgres is healthy
+docker-compose ps postgres
+
+# Check logs
+docker-compose logs postgres
+
+# Verify connection string in .env
+```
+
+### Issue: "DAG not appearing in UI"
+```bash
+# DAGs take time to parse
+# Wait 2-3 minutes and refresh
+
+# Or check scheduler logs
+docker-compose logs airflow-scheduler | grep "Parsing"
+```
+
+### Issue: "Task failed with timeout"
+```python
+# Increase execution_timeout in DAG
+execution_timeout=timedelta(hours=4)  # Increase from 2 to 4
+
+# Or optimize transformation logic
+```
+
+## 📚 Next Steps
+
+1. **Customize DAG**: Modify `etl_pipeline_dag.py` for your data sources
+2. **Add Connections**: Add your API keys and database connections
+3. **Extend Transforms**: Add domain-specific transformation logic
+4. **Add Monitoring**: Integrate Slack, PagerDuty, Datadog
+5. **Deploy**: Move to MWAA, Cloud Composer, or self-hosted
+
+## 📖 Additional Resources
+
+- **Airflow Docs**: https://airflow.apache.org/docs/
+- **Best Practices**: https://airflow.apache.org/docs/apache-airflow/stable/best-practices.html
+- **Providers**: https://registry.astronomer.io/
+- **Community**: https://apache-airflow.slack.com/
+
+## 🤝 Support & Contributions
+
+Need help? Check:
+1. Logs: `docker-compose logs [service]`
+2. UI: http://localhost:8080
+3. Database: `docker-compose exec postgres psql -U airflow`
+4. Docs: https://airflow.apache.org/
+
+---
+
+**Happy data engineering! 🚀**

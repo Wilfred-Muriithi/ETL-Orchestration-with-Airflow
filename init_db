@@ -1,0 +1,138 @@
+-- Initialize database schema and tables
+-- This script runs automatically when postgres container starts
+
+-- Create database if not exists (handled by postgres container env)
+-- CREATE DATABASE data_warehouse;
+
+-- Connect to data warehouse database
+-- \c data_warehouse;
+
+-- Create schemas
+CREATE SCHEMA IF NOT EXISTS staging;
+CREATE SCHEMA IF NOT EXISTS warehouse;
+CREATE SCHEMA IF NOT EXISTS logs;
+
+-- Staging table for ETL data
+CREATE TABLE IF NOT EXISTS staging.etl_data (
+    id SERIAL PRIMARY KEY,
+    source VARCHAR(50) NOT NULL,
+    data JSONB NOT NULL,
+    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(source, data)
+);
+
+-- Source data - Job listings
+CREATE TABLE IF NOT EXISTS warehouse.job_listings (
+    job_id SERIAL PRIMARY KEY,
+    source VARCHAR(50) NOT NULL,
+    title VARCHAR(255) NOT NULL,
+    company VARCHAR(255) NOT NULL,
+    location VARCHAR(255),
+    salary_range VARCHAR(100),
+    description TEXT,
+    url VARCHAR(500),
+    extracted_at TIMESTAMP,
+    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Source data - Applications
+CREATE TABLE IF NOT EXISTS warehouse.applications (
+    app_id SERIAL PRIMARY KEY,
+    user_id INT,
+    job_id INT REFERENCES warehouse.job_listings(job_id),
+    status VARCHAR(50),
+    applied_date TIMESTAMP,
+    response_received TIMESTAMP,
+    outcome VARCHAR(50),
+    notes TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Logs table
+CREATE TABLE IF NOT EXISTS logs.etl_logs (
+    log_id SERIAL PRIMARY KEY,
+    dag_id VARCHAR(255),
+    task_id VARCHAR(255),
+    execution_date TIMESTAMP,
+    status VARCHAR(50),
+    message TEXT,
+    error_message TEXT,
+    duration_seconds INT,
+    records_processed INT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Create indexes for performance
+CREATE INDEX IF NOT EXISTS idx_etl_data_source ON staging.etl_data(source);
+CREATE INDEX IF NOT EXISTS idx_etl_data_processed ON staging.etl_data(processed_at);
+CREATE INDEX IF NOT EXISTS idx_job_listings_source ON warehouse.job_listings(source);
+CREATE INDEX IF NOT EXISTS idx_job_listings_company ON warehouse.job_listings(company);
+CREATE INDEX IF NOT EXISTS idx_applications_job ON warehouse.applications(job_id);
+CREATE INDEX IF NOT EXISTS idx_applications_user ON warehouse.applications(user_id);
+CREATE INDEX IF NOT EXISTS idx_etl_logs_dag ON logs.etl_logs(dag_id);
+CREATE INDEX IF NOT EXISTS idx_etl_logs_execution ON logs.etl_logs(execution_date);
+
+-- Create audit trigger function
+CREATE OR REPLACE FUNCTION update_timestamp()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = CURRENT_TIMESTAMP;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+-- Apply audit trigger to tables
+DROP TRIGGER IF EXISTS update_job_listings_timestamp ON warehouse.job_listings;
+CREATE TRIGGER update_job_listings_timestamp
+BEFORE UPDATE ON warehouse.job_listings
+FOR EACH ROW
+EXECUTE FUNCTION update_timestamp();
+
+DROP TRIGGER IF EXISTS update_applications_timestamp ON warehouse.applications;
+CREATE TRIGGER update_applications_timestamp
+BEFORE UPDATE ON warehouse.applications
+FOR EACH ROW
+EXECUTE FUNCTION update_timestamp();
+
+-- Sample source table for incremental extraction
+CREATE TABLE IF NOT EXISTS staging.source_table (
+    id SERIAL PRIMARY KEY,
+    name VARCHAR(255),
+    value VARCHAR(500),
+    status VARCHAR(50),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Insert sample data
+INSERT INTO staging.source_table (name, value, status)
+VALUES 
+    ('data_1', 'value_1', 'active'),
+    ('data_2', 'value_2', 'active'),
+    ('data_3', 'value_3', 'inactive')
+ON CONFLICT DO NOTHING;
+
+-- Grant permissions (if using separate user)
+-- GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA staging TO dw_user;
+-- GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA warehouse TO dw_user;
+-- GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA logs TO dw_user;
+
+-- Create views for monitoring
+CREATE OR REPLACE VIEW logs.recent_etl_runs AS
+SELECT 
+    dag_id,
+    MAX(execution_date) as last_run,
+    COUNT(*) as total_runs,
+    SUM(CASE WHEN status = 'success' THEN 1 ELSE 0 END) as successful_runs,
+    SUM(records_processed) as total_records
+FROM logs.etl_logs
+GROUP BY dag_id
+ORDER BY last_run DESC;
+
+-- Display completion message
+SELECT 'Database initialization completed successfully!' as status;

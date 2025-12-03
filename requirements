@@ -1,0 +1,36 @@
+apache-airflow==2.7.3
+apache-airflow-providers-postgres==5.10.0
+apache-airflow-providers-http==4.7.0
+apache-airflow-providers-slack==8.4.0
+apache-airflow-providers-amazon==8.14.0
+
+# Data Processing
+pandas==2.1.4
+numpy==1.26.3
+python-dateutil==2.8.2
+
+# Database
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.23
+
+# API & HTTP
+requests==2.31.0
+aiohttp==3.9.1
+
+# Logging & Monitoring
+python-json-logger==2.0.7
+
+# Testing
+pytest==7.4.3
+pytest-cov==4.1.0
+pytest-mock==3.12.0
+
+# Utilities
+python-dotenv==1.0.0
+pydantic==2.5.2
+pydantic-settings==2.1.0
+
+# Development
+black==23.12.1
+flake8==6.1.0
+mypy==1.7.1
