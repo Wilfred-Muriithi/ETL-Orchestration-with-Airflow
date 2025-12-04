@@ -69,7 +69,7 @@ cd ETL-Orchestration-with-Airflow
 # Create environment configuration
 cat > .env << EOF
 POSTGRES_USER=airflow
-POSTGRES_PASSWORD=airflow
+POSTGRES_PASSWORD=****
 POSTGRES_DB=airflow
 DATA_WAREHOUSE_DB=data_warehouse
 ENVIRONMENT=development
@@ -95,7 +95,7 @@ Navigate to `http://localhost:8080`
 
 **Credentials:**
 - Username: `airflow`
-- Password: `airflow`
+- Password: `*****`
 
 ## 📁 Project Structure
 
@@ -253,7 +253,7 @@ AIRFLOW__CORE__MAX_ACTIVE_TASKS_PER_DAG=3
 
 # Database
 POSTGRES_USER=airflow
-POSTGRES_PASSWORD=airflow
+POSTGRES_PASSWORD=****
 POSTGRES_HOST=postgres
 POSTGRES_PORT=5432
 
